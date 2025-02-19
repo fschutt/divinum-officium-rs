@@ -7,29 +7,6 @@
 //! that the same logic is preserved. All dates are handled using a purely
 //! algorithmic approach, avoiding external libraries, and thus can handle
 //! historical dates outside the usual platform range if needed.
-//!
-//! # Overview
-//!
-//! The module includes:
-//!
-//! - **`leap_year(year)`**: Checks whether a given year is leap.
-//! - **`geteaster(year)`**: Computes the date of Easter for a given year (Gregorian).
-//! - **`getadvent(year)`**: Computes the day-of-year for the First Sunday of Advent.
-//! - **`day_of_week(day, month, year)`**: Returns the weekday (0 = Sunday, 1 = Monday, …, 6 = Saturday).
-//! - **`date_to_ydays(day, month, year)`**: Converts a date to its day-of-year index (1-based).
-//! - **`ydays_to_date(day_of_year, year)`**: Converts a day-of-year back into (day, month, year).
-//! - **`getweek(day, month, year, tomorrow, missa)`**: Determines the liturgical week label (e.g. "Adv1", "Quad3", etc.).
-//! - **`monthday(day, month, year, modernstyle, tomorrow)`**: Helper for the August–December block in the older rubrics.
-//! - **`get_sday(month, day, year)`**: Returns the month-day string used by the `Sancti` data (handles leap day logic).
-//! - **`nextday(month, day, year)`**: Returns the `Sancti`-style string (`MM-DD`) for the next calendar day (for Vespers usage).
-//! - **`prevnext(date_str, inc)`**: Shifts a date string `MM-DD-YYYY` by `inc` days forward/backward, returning a new string.
-//! - **`days_to_date(days)`**: Converts a day-count since 1970-01-01 to a date breakdown (similar to localtime-like structure).
-//! - **`date_to_days(day, month, year)`**: Converts a date to the count of days since 1970-01-01 (mirroring the Perl logic).
-//!
-//! Most of these functions exist to support the Divinum Officium rubrical
-//! complexities, especially around the older calendar rules (e.g. the “leap
-//! day” numbering issue in February). For new usage, prefer a thorough date
-//! library, unless compatibility with the project’s original logic is required.
 
 use chrono::Datelike;
 

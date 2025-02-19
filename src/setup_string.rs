@@ -29,12 +29,12 @@
 //! of the Rust codebase (e.g. a main “engine” that sets up the context).
 
 use lazy_static::lazy_static;
-use regex::Regex;
 use std::collections::HashMap;
+use regex::Regex;
 use std::path::PathBuf;
 
-use crate::fileio::{do_read, do_write};
-use crate::date::{monthday}; // If you need `monthday(...)` from date.rs
+use crate::fileio::do_read;
+use crate::date::monthday; // If you need `monthday(...)` from date.rs
 
 /// These enums mirror the Perl constants `RESOLVE_NONE`, `RESOLVE_WHOLEFILE`,
 /// and `RESOLVE_ALL`, controlling how thoroughly we expand `@filename:section`
@@ -74,6 +74,18 @@ pub struct SetupStringContext {
     /// If needed: store “dayname” array, where dayname[0] is e.g. "Quadp2–4",
     /// dayname[1] might be the “short label,” etc. You can define or skip as needed.
     pub dayname: [String; 2],
+}
+
+/// This trait abstracts the file–loading functionality. In production, your
+/// SetupStringContext (a struct) will implement this trait.
+pub trait SetupStringProvider {
+    fn setupstring(&mut self, lang: &str, file: &str, res: ResolveDirectives) -> Option<FileSections>;
+}
+
+impl SetupStringProvider for SetupStringContext {
+    fn setupstring(&mut self, lang: &str, file: &str, res: ResolveDirectives) -> Option<FileSections> {
+        self.setupstring(lang, file, res)
+    }
 }
 
 /// A “sectioned file” is stored as a map from “section title” to the lines
@@ -354,7 +366,7 @@ fn split_preserving_operator(input: &str, operators: &[&str]) -> Vec<String> {
         "({})",
         operators
             .iter()
-            .map(|op| format!(r"\b{}\b", regex::escape(op)))
+            .map(|op| format!(r"\b{}\b", crate::regex::escape(op)))
             .collect::<Vec<_>>()
             .join("|")
     );
@@ -894,4 +906,29 @@ impl SetupStringContext {
             Some(base_opt)
         }
     }
+}
+
+/// Freestanding setupstring function.
+///
+/// This function instantiates a default SetupStringContext and calls its method to load
+/// and parse the file. In a real application, you’d configure the context appropriately.
+pub fn setupstring(
+    lang: &str,
+    fname: &str,
+    resolve: ResolveDirectives,
+) -> Option<FileSections> {
+    // Create a default context with placeholder values.
+    let mut context = SetupStringContext {
+        version: "Rubrics 1960".to_string(),
+        datafolder: PathBuf::from("data"), // adjust as needed
+        cache_by_version: HashMap::new(),
+        missa_number: "".to_string(),
+        dayofweek: 0,
+        commune: "".to_string(),
+        votive: "".to_string(),
+        hora: "".to_string(),
+        dayname: [String::from("DayName1"), String::from("DayName2")],
+    };
+
+    context.setupstring(lang, fname, resolve)
 }

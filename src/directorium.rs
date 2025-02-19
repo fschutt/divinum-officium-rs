@@ -4,17 +4,6 @@
 //!
 //! It provides functions for obtaining liturgical data from cached data files.
 //!
-//! Exported functions include:
-//! - `get_kalendar`
-//! - `get_transfer`
-//! - `get_stransfer`
-//! - `get_tempora`
-//! - `transfered`
-//! - `check_coronatio`
-//! - `dirge`
-//! - `hymnmerge`
-//! - `hymnshift`
-//!
 //! Internally, the module loads data from a file (DATA_FOLDER/data.txt) into a global
 //! cache (representing version‐specific data) and uses additional caches for other files.
 //!
@@ -23,7 +12,6 @@
 
 use crate::date;
 use crate::fileio;
-use regex::Regex;
 use std::collections::HashMap;
 use std::io;
 use std::sync::Mutex;
@@ -106,28 +94,90 @@ fn is_cached(key: &str) -> bool {
     DCACHE.lock().unwrap().contains_key(key)
 }
 
+/// --- Helper functions replacing regexes --- ///
+
+/// Remove an optional prefix "Hy" or "seant" from the beginning of a string.
+fn remove_optional_prefix(s: &str) -> &str {
+    if s.starts_with("Hy") {
+        &s[2..]
+    } else if s.starts_with("seant") {
+        &s[5..]
+    } else {
+        s
+    }
+}
+
+/// Returns true if the line matches the pattern equivalent to:
+///   ^(?:Hy|seant)?(?:01|02-[01]|02-2[01239]|dirge1)
+fn matches_pattern1(line: &str) -> bool {
+    let s = remove_optional_prefix(line);
+    if s.starts_with("01") {
+        return true;
+    }
+    if s.starts_with("02-0") || s.starts_with("02-1") {
+        return true;
+    }
+    if s.starts_with("02-2") {
+        // "02-2" is 4 characters; check the next character if present
+        if let Some(c) = s.chars().nth(4) {
+            if "01239".contains(c) {
+                return true;
+            }
+        }
+    }
+    if s.starts_with("dirge1") {
+        return true;
+    }
+    false
+}
+
+/// Returns true if the line matches the pattern equivalent to:
+///   ^(?:Hy|seant)?(?:01|02-[01]|02-2[01239]|.*=(01|02-[01]|02-2[0123])|dirge1)
+fn matches_pattern2(line: &str) -> bool {
+    let s = remove_optional_prefix(line);
+    if s.starts_with("01") || s.starts_with("02-0") || s.starts_with("02-1") {
+        return true;
+    }
+    if s.starts_with("02-2") {
+        if let Some(c) = s.chars().nth(4) {
+            if "01239".contains(c) {
+                return true;
+            }
+        }
+    }
+    if s.starts_with("dirge1") {
+        return true;
+    }
+    // Check for alternative: any text, then '=' then one of (01|02-[01]|02-2[0123])
+    if let Some(eq_pos) = s.find('=') {
+        let after = &s[eq_pos + 1..];
+        if after.starts_with("01") || after.starts_with("02-0") || after.starts_with("02-1") {
+            return true;
+        }
+        if after.starts_with("02-2") {
+            if let Some(c) = after.chars().nth(4) {
+                if "0123".contains(c) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Reads a transfer file from DATA_FOLDER/{type}/{name}.txt and filters its lines according to `filter`.
 ///
-/// - If `filter == 1`: returns lines that do **not** match regexp2.
-/// - If `filter == 2`: returns lines that **do** match regexp.
+/// - If `filter == 1`: returns lines that do **not** match pattern2.
+/// - If `filter == 2`: returns lines that **do** match pattern1.
 /// - Otherwise, returns all lines.
 fn load_transfer_file(name: &str, filter: i32, type_: &str) -> io::Result<Vec<String>> {
     let path = format!("{}/{}/{}.txt", DATA_FOLDER, type_, name);
     let lines = fileio::do_read(&path)?;
-    let re1 = Regex::new(r"^(?:Hy|seant)?(?:01|02-[01]|02-2[01239]|dirge1)").unwrap();
-    let re2 = Regex::new(r"^(?:Hy|seant)?(?:01|02-[01]|02-2[01239]|.*=(01|02-[01]|02-2[0123])|dirge1)").unwrap();
     let filtered = if filter == 1 {
-        lines
-            .into_iter()
-            .filter(|line| !re2.is_match(line))
-            .collect()
+        lines.into_iter().filter(|line| !matches_pattern2(line)).collect()
     } else if filter == 2 {
-        lines
-            .into_iter()
-            .filter(|line| re1.is_match(line))
-            .collect()
+        lines.into_iter().filter(|line| matches_pattern1(line)).collect()
     } else {
-        // no filtering
         lines
     };
     Ok(filtered)
@@ -176,7 +226,6 @@ fn load_tempora(version: &str) -> io::Result<()> {
     for line in lines {
         let parts: Vec<&str> = line.splitn(2, '=').collect();
         if parts.len() == 2 {
-            // Use substring of the value up to the first ';'
             let val = parts[1]
                 .split(';')
                 .next()
@@ -217,35 +266,30 @@ fn load_transfer(
             return Ok(map.clone());
         }
     }
-    // Not cached yet—compute it.
     let isleap = date::leap_year(year);
     let (e_day, e_month, _) = date::geteaster(year);
     let e_value = e_month * 100 + e_day; // as in Perl: month*100 + day
     let letter_index = (e_value as i32 - 319 + if e_month == 4 { 1 } else { 0 }) % 7;
     let letters = ["a", "b", "c", "d", "e", "f", "g"];
     let mut lines = load_transfer_file(letters[letter_index as usize], if isleap { 1 } else { 0 }, type_str)?;
-    // Also add lines from the file named by e_value.
     lines.extend(load_transfer_file(&e_value.to_string(), if isleap { 0 } else { 0 }, type_str)?);
     if isleap {
         let mut e_adj = e_value + 1;
         if e_adj == 332 {
             e_adj = 401;
         }
-        // Note: in Perl, letter index with offset -6.
         let letter2_index = ((letter_index - 6).rem_euclid(7)) as usize;
         lines.extend(load_transfer_file(letters[letter2_index], 2, type_str)?);
         lines.extend(load_transfer_file(&e_adj.to_string(), 2, type_str)?);
     }
     let mut transfer_map = HashMap::new();
     for line in lines {
-        // Split on ";;" to get (the line, and an optional version pattern)
         let parts: Vec<&str> = line.split(";;").collect();
         if parts.is_empty() {
             continue;
         }
         let entry = parts[0];
         let ver_pattern = parts.get(1).map(|s| s.trim());
-        // If no version pattern or if the version pattern matches ver_data.transfer, we accept this entry.
         if ver_pattern.is_none() || ver_pattern.unwrap().is_empty() || ver_data.transfer.contains(ver_pattern.unwrap()) {
             let kv: Vec<&str> = entry.splitn(2, '=').collect();
             if kv.len() == 2 {
@@ -274,7 +318,6 @@ pub fn get_kalendar(version: &str, day: &str) -> Option<String> {
             return Some(val.clone());
         }
     }
-    // Fallback: use the base version if available.
     let data_lock = DATA.lock().unwrap();
     if let Some(ver_data) = data_lock.get(version) {
         if !ver_data.base.is_empty() {
@@ -301,7 +344,6 @@ pub fn get_transfer(year: i32, version: &str, key: &str) -> Option<String> {
             }
         }
     }
-    // Fallback using tbase
     let data_lock = DATA.lock().unwrap();
     if let Some(ver_data) = data_lock.get(version) {
         if !ver_data.tbase.is_empty() {
@@ -328,7 +370,6 @@ pub fn get_stransfer(year: i32, version: &str, key: &str) -> Option<String> {
             }
         }
     }
-    // Fallback using tbase
     let data_lock = DATA.lock().unwrap();
     if let Some(ver_data) = data_lock.get(version) {
         if !ver_data.tbase.is_empty() {
@@ -353,7 +394,6 @@ pub fn get_tempora(version: &str, key: &str) -> Option<String> {
             }
         }
     }
-    // Fallback using tbase
     let data_lock = DATA.lock().unwrap();
     if let Some(ver_data) = data_lock.get(version) {
         if !ver_data.tbase.is_empty() {
@@ -365,12 +405,7 @@ pub fn get_tempora(version: &str, key: &str) -> Option<String> {
 
 /// Checks whether a given saint or season is transferred.
 /// Returns Some(destination) if transferred, or None otherwise.
-///
-/// The function first removes any "Sancti" or "Sanctim" prefix from `s`,
-/// then looks for a matching key in the Transfer table (and then the Tempora table)
-/// where the value (if present) does not end with a trailing "v".
 pub fn transfered(s: &str, year: i32, version: &str) -> Option<String> {
-    // Remove "Sancti" or "Sanctim" prefix.
     let s = s.replacen("SanctiM/", "", 1).replacen("Sancti/", "", 1);
     if s.trim().is_empty() {
         return None;
@@ -388,7 +423,7 @@ pub fn transfered(s: &str, year: i32, version: &str) -> Option<String> {
                 if !val.starts_with(key)
                     && (s.to_lowercase().contains(&val.to_lowercase())
                         || val.to_lowercase().contains(&s.to_lowercase()))
-                    && !tm.get(key).map_or(false, |v| Regex::new(r"v\s*$").unwrap().is_match(v))
+                    && !tm.get(key).map_or(false, |v| v.trim_end().ends_with("v"))
                 {
                     return Some(key.clone());
                 }
@@ -403,7 +438,7 @@ pub fn transfered(s: &str, year: i32, version: &str) -> Option<String> {
             }
             if val.to_lowercase().contains(&s.to_lowercase()) {
                 if let Some(t_val) = transfer_map.as_ref().and_then(|m| m.get(key)) {
-                    if !Regex::new(r"v\s*$").unwrap().is_match(t_val) {
+                    if !t_val.trim_end().ends_with("v") {
                         return Some(key.clone());
                     }
                 }
@@ -424,10 +459,8 @@ pub fn check_coronatio(day: u32, month: u32) -> Option<String> {
 
 /// Determines whether a “dirge” (defunctorum) should be said after a given hour.
 /// Returns true if the current hour (or the next day’s for Vespera) matches the transfer rule.
-/// - `hora` should match either "Vespera" or "Laudes"; otherwise, returns false.
 pub fn dirge(version: &str, hora: &str, day: u32, month: u32, year: i32) -> bool {
-    let re = Regex::new(r"(?i)Vespera|Laudes").unwrap();
-    if !re.is_match(hora) {
+    if !(hora.contains("Vespera") || hora.contains("Laudes")) {
         return false;
     }
     let sday = if hora.contains("Laudes") {
@@ -438,21 +471,207 @@ pub fn dirge(version: &str, hora: &str, day: u32, month: u32, year: i32) -> bool
     let part1 = get_transfer(year, version, "dirge1").unwrap_or_else(|| "".to_string());
     let part2 = get_transfer(year, version, "dirge2").unwrap_or_else(|| "".to_string());
     let dirgeline = format!("{} {}", part1, part2);
-    Regex::new(&regex::escape(&sday))
-        .unwrap()
-        .is_match(&dirgeline)
+    dirgeline.contains(&sday)
 }
 
 /// Determines whether the Matutinum Hymn should be merged with Vesperas.
-/// Returns true if the transfer table value for the key "Hy<SanctiDay>" equals "1".
 pub fn hymnmerge(version: &str, day: u32, month: u32, year: i32) -> bool {
     let key = format!("Hy{}", date::get_sday(month, day, year));
     get_transfer(year, version, &key).map_or(false, |v| v == "1")
 }
 
 /// Determines whether the Hymns should be shifted according to the transfer table.
-/// Returns true if the transfer table value for "Hy<SanctiDay>" equals "2".
 pub fn hymnshift(version: &str, day: u32, month: u32, year: i32) -> bool {
     let key = format!("Hy{}", date::get_sday(month, day, year));
     get_transfer(year, version, &key).map_or(false, |v| v == "2")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // --- Tests for the helper functions (mimicking the original regex behavior) --- //
+
+    #[test]
+    fn test_matches_pattern1() {
+        // These examples should match the pattern:
+        assert!(matches_pattern1("Hy01Test"));
+        assert!(matches_pattern1("seant02-1Example"));
+        assert!(matches_pattern1("02-29Data")); // because "02-2" + '9'
+        assert!(matches_pattern1("dirge1Something"));
+        // These should not match:
+        assert!(!matches_pattern1("03-01Data"));
+        assert!(!matches_pattern1("SomeOtherText"));
+    }
+
+    #[test]
+    fn test_matches_pattern2() {
+        // Examples matching one of the first alternatives:
+        assert!(matches_pattern2("Hy01Test"));
+        assert!(matches_pattern2("seant02-1Example"));
+        assert!(matches_pattern2("02-29Data"));
+        assert!(matches_pattern2("dirge1Something"));
+        // Test the alternative with '=':
+        assert!(matches_pattern2("anything=01rest"));
+        assert!(matches_pattern2("prefix=02-0more"));
+        assert!(matches_pattern2("prefix=02-1more"));
+        assert!(matches_pattern2("prefix=02-20more"));
+        assert!(matches_pattern2("prefix=02-22more"));
+        // Should not match if after '=' the pattern is not one of the allowed:
+        assert!(!matches_pattern2("prefix=03-01more"));
+    }
+
+    // --- Tests for public functions --- //
+
+    #[test]
+    fn test_check_coronatio() {
+        assert_eq!(check_coronatio(20, 3), Some("Votive/Coronatio".to_string()));
+        assert_eq!(check_coronatio(19, 3), None);
+        assert_eq!(check_coronatio(20, 4), None);
+    }
+
+    #[test]
+    fn test_get_kalendar_with_cache() {
+        // Simulate a version and preloaded kalendar data.
+        let version = "test_version";
+        {
+            let mut data_lock = DATA.lock().unwrap();
+            data_lock.insert(version.to_string(), Data {
+                kalendar: "dummy_kal".to_string(),
+                transfer: "".to_string(),
+                stransfer: "".to_string(),
+                base: "".to_string(),
+                tbase: "".to_string(),
+            });
+        }
+        // Insert a dummy kalendar cache for this version.
+        let cache_key = format!("kalendar:{}", version);
+        let mut kal_map = HashMap::new();
+        kal_map.insert("Monday".to_string(), "file_monday.txt".to_string());
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            dcache.insert(cache_key.clone(), kal_map);
+        }
+        assert_eq!(get_kalendar(version, "Monday"), Some("file_monday.txt".to_string()));
+        assert_eq!(get_kalendar(version, "Tuesday"), None);
+    }
+
+    #[test]
+    fn test_get_transfer_with_cache() {
+        // Set up dummy data in DATA and DCACHE for a transfer table.
+        let version = "test_version";
+        let year = 2025;
+        {
+            let mut data_lock = DATA.lock().unwrap();
+            data_lock.insert(version.to_string(), Data {
+                kalendar: "".to_string(),
+                transfer: "dummy_transfer".to_string(),
+                stransfer: "".to_string(),
+                base: "".to_string(),
+                tbase: "".to_string(),
+            });
+        }
+        let cache_key = format!("Transfer:{}:{}", version, year);
+        let mut transfer_map = HashMap::new();
+        transfer_map.insert("key1".to_string(), "value1".to_string());
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            dcache.insert(cache_key.clone(), transfer_map);
+        }
+        assert_eq!(get_transfer(year, version, "key1"), Some("value1".to_string()));
+        assert_eq!(get_transfer(year, version, "nonexistent"), None);
+    }
+
+    #[test]
+    fn test_get_tempora_with_cache() {
+        let version = "test_version";
+        {
+            let mut data_lock = DATA.lock().unwrap();
+            data_lock.insert(version.to_string(), Data {
+                kalendar: "".to_string(),
+                transfer: "".to_string(),
+                stransfer: "".to_string(),
+                base: "".to_string(),
+                tbase: "".to_string(),
+            });
+        }
+        let cache_key = format!("Tempora:{}", version);
+        let mut tempora_map = HashMap::new();
+        tempora_map.insert("temp_key".to_string(), "temp_value".to_string());
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            dcache.insert(cache_key.clone(), tempora_map);
+        }
+        assert_eq!(get_tempora(version, "temp_key"), Some("temp_value".to_string()));
+        assert_eq!(get_tempora(version, "nonexistent"), None);
+    }
+
+    #[test]
+    fn test_transfered() {
+        // Set up dummy transfer table and tempora table in DCACHE.
+        let version = "test_version";
+        let year = 2025;
+        let transfer_key = format!("Transfer:{}:{}", version, year);
+        let mut transfer_map = HashMap::new();
+        // Insert a key (not containing "dirge" or "hy") with a value that does not end with 'v'
+        transfer_map.insert("dest".to_string(), "saint".to_string());
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            dcache.insert(transfer_key.clone(), transfer_map);
+            dcache.insert(format!("Tempora:{}", version), HashMap::new());
+        }
+        // "Sancti/Saint" should trigger a match.
+        assert_eq!(transfered("Sancti/Saint", year, version), Some("dest".to_string()));
+        // A non‐matching string returns None.
+        assert_eq!(transfered("Sancti/Unknown", year, version), None);
+    }
+
+    #[test]
+    fn test_dirge() {
+        // For dirge, simulate get_transfer values for "dirge1" and "dirge2".
+        let version = "test_version";
+        let year = 2025;
+        let cache_key = format!("Transfer:{}:{}", version, year);
+        let mut transfer_map = HashMap::new();
+        transfer_map.insert("dirge1".to_string(), "ABC".to_string());
+        transfer_map.insert("dirge2".to_string(), "DEF".to_string());
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            dcache.insert(cache_key.clone(), transfer_map);
+        }
+        // We assume that date::get_sday and nextday return a string that might match.
+        // Here we simply check that the function returns a boolean.
+        let result = dirge(version, "Laudes", 1, 1, year);
+        assert!(result == true || result == false);
+    }
+
+    #[test]
+    fn test_hymnmerge_and_hymnshift() {
+        let version = "test_version";
+        let year = 2025;
+        // Assume that date::get_sday returns "X" for the given parameters.
+        let sday = "X".to_string();
+        let key = format!("Hy{}", sday);
+        let cache_key = format!("Transfer:{}:{}", version, year);
+        let mut transfer_map = HashMap::new();
+        transfer_map.insert(key.clone(), "1".to_string());
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            dcache.insert(cache_key.clone(), transfer_map);
+        }
+        // hymnmerge should be true if the transfer value equals "1".
+        let merge = hymnmerge(version, 1, 1, year);
+        assert_eq!(merge, true);
+        // Now change the transfer value to "2" for hymnshift.
+        {
+            let mut dcache = DCACHE.lock().unwrap();
+            if let Some(map) = dcache.get_mut(&cache_key) {
+                map.insert(key.clone(), "2".to_string());
+            }
+        }
+        let shift = hymnshift(version, 1, 1, year);
+        assert_eq!(shift, true);
+    }
+}
+

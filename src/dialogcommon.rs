@@ -42,7 +42,6 @@
 //!   to produce a more user-friendly label on the UI.
 
 use std::collections::HashMap;
-use regex::Regex;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
@@ -63,30 +62,61 @@ pub fn get_dialog(name: &str) -> Vec<String> {
 /// Here, we simply parse them safely.
 ///
 /// Any line not matching the `$var='value'` pattern is ignored.
+/// Reads a “file.ini” containing lines of the form `$var='value'`.
+/// Returns a map of variable => value. Any line not matching the pattern is ignored.
 pub fn get_ini(file_path: &str) -> HashMap<String, String> {
     let mut result = HashMap::new();
-    // For the DO style, each line might look like:
-    //   $datafolder='/some/path'
-    //   $blackfont='some-value'
-    //   # comment
-    let re = Regex::new(r"^\$(\w+)\s*=\s*'(.*)'").unwrap();
 
     if let Ok(content) = std::fs::read_to_string(file_path) {
         for line in content.lines() {
-            let line = line.trim();
-            // Skip comments or empties
-            if line.is_empty() || line.starts_with('#') {
+            let trimmed = line.trim();
+            // Skip empty lines or comments.
+            if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            // Try to capture `$var='value'`
-            if let Some(cap) = re.captures(line) {
-                let var_name = cap[1].to_string();
-                let var_value = cap[2].to_string();
-                result.insert(var_name, var_value);
+            if let Some((var, value)) = parse_line(trimmed) {
+                result.insert(var, value);
             }
         }
     }
     result
+}
+
+/// Parses a single line of the form `$var='value'` and returns Some((var, value)) if successful.
+///
+/// This function mimics the behavior of the regex:
+///   ^\$(\w+)\s*=\s*'(.*)'
+/// It requires the line to start with a `$`, followed by a word, an equals sign (with
+/// optional spaces), and a value enclosed in single quotes. If the line does not match,
+/// None is returned.
+fn parse_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+    if !line.starts_with('$') {
+        return None;
+    }
+    // Remove the leading '$'
+    let rest = &line[1..];
+    // Look for the '=' sign that separates the variable name from the value.
+    let eq_index = rest.find('=')?;
+    let var_part = rest[..eq_index].trim();
+    // Ensure the variable name is nonempty and contains only word characters.
+    if var_part.is_empty() || !var_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    let var_name = var_part.to_string();
+
+    // Get the part after the '=' sign and trim any whitespace.
+    let after_eq = rest[eq_index + 1..].trim();
+    // The value must start with a single quote.
+    if !after_eq.starts_with('\'') {
+        return None;
+    }
+    // Remove the opening quote.
+    let after_quote = &after_eq[1..];
+    // Find the last (closing) quote.
+    let last_quote_index = after_quote.rfind('\'')?;
+    let var_value = &after_quote[..last_quote_index];
+    Some((var_name, var_value.to_string()))
 }
 
 /// Removes trailing newlines and `\r` from a string.
@@ -315,5 +345,38 @@ pub fn version_displayname(dialog_data: &mut DialogData, version: &str) -> Strin
         }
     } else {
         version.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// Tests the helper function with several inputs.
+    #[test]
+    fn test_parse_line() {
+        // Valid cases.
+        assert_eq!(
+            parse_line("$datafolder='/some/path'"),
+            Some(("datafolder".to_string(), "/some/path".to_string()))
+        );
+        assert_eq!(
+            parse_line("$blackfont = 'some-value'"),
+            Some(("blackfont".to_string(), "some-value".to_string()))
+        );
+        assert_eq!(
+            parse_line("$empty=''"),
+            Some(("empty".to_string(), "".to_string()))
+        );
+        // Even if there is extra text after the closing quote,
+        // our implementation (like the original regex) takes everything up to the last quote.
+        assert_eq!(
+            parse_line("$var='value' extra"),
+            Some(("var".to_string(), "value".to_string()))
+        );
+
+        // Invalid cases.
+        assert_eq!(parse_line("not a valid line"), None);
+        assert_eq!(parse_line("$var=value'"), None);  // missing opening quote
+        assert_eq!(parse_line("$var='value"), None);    // missing closing quote
     }
 }
