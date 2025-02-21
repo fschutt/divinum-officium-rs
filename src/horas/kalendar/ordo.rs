@@ -9,7 +9,9 @@
 
 use std::collections::HashMap;
 use std::mem;
-use crate::liturgical_color;
+use crate::directorium::dirge;
+use crate::{liturgical_color, setfont};
+use crate::setup_string::{setupstring, ResolveDirectives};
 
 /// Context for constructing one–day Ordo entries.
 pub struct OrdoContext {
@@ -218,7 +220,7 @@ pub fn ordo_entry(ctx: &OrdoContext, date: &str, compare: bool, winneronly: bool
 /// Prepares one table row for the kalendar.
 /// 
 /// Returns a 5-tuple: (link for day number, c1, c2, cv (in small font), day name).
-pub fn table_row(ctx: &OrdoContext, date: &str, compare: bool, version1: &str, version2: &str, domlet_counter: i32, dayofweek: usize) -> (String, String, String, String, String) {
+pub fn table_row(ctx: &OrdoContext, date: &str, compare: bool, dayofweek: usize) -> (String, String, String, String, String) {
     let d: i32 = date.get(3..5).and_then(|s| s.parse().ok()).unwrap_or(0);
     let (mut c1, mut c2, mut cv) = ordo_entry(ctx, date, compare, false);
     if compare {
@@ -227,7 +229,7 @@ pub fn table_row(ctx: &OrdoContext, date: &str, compare: bool, version1: &str, v
         c2 = format!("{}<br/>{}", c2, c22);
         cv = format!("{}<br/>{}", cv, cv2);
     }
-    let link = format!(r#"<A HREF="#" onclick=\"callbrevi('{}');\">{}</A>"#, date, d);
+    let link = format!("<A HREF=\"#\" onclick=\"callbrevi('{}');\">{}</A>", date, d);
     let cv_font = format!(r#"<FONT SIZE="-2">{}</FONT>"#, cv);
     // Assume the day name for the table row comes from ctx.daynames[dayofweek]
     let dayname = ctx.daynames.get(dayofweek).cloned().unwrap_or_default();
@@ -307,7 +309,7 @@ mod tests {
             version: "TestVersion".to_string(),
             kmonth: 3,
             kyear: 2024,
-            monthnames: crate::MONTH_NAMES.iter().map(String::from).collect(),
+            monthnames: crate::MONTH_NAMES.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -395,7 +397,7 @@ mod tests {
     #[test]
     fn test_table_row() {
         let ctx = dummy_ordo_context();
-        let (link, c1, c2, cv_font, dayname) = table_row(&ctx, "05-12-2023", false, "v1", "v2", 2, 1);
+        let (link, c1, c2, cv_font, dayname) = table_row(&ctx, "05-12-2023", false, 1);
         assert!(link.contains("12"));
         assert!(!dayname.is_empty());
     }

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::setup_string::{FileSections, ResolveDirectives, SetupStringProvider};
 
 /// Holds the language data previously stored in globals.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LanguageTextContext {
     pub translate: HashMap<String, FileSections>,
     pub prayers: HashMap<String, FileSections>,

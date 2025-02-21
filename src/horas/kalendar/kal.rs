@@ -7,8 +7,11 @@
 //! computing an epact cycle, and ultimately building table rows.
 
 use chrono::{Datelike, Local, Timelike};
-use std::collections::HashMap;
-use crate::liturgical_color;
+use crate::directorium::get_kalendar;
+use crate::horas::horascommon::rankname;
+use crate::regex::{ci_contains, subdirname};
+use crate::{liturgical_color, setfont};
+use crate::setup_string::{setupstring, ResolveDirectives, SetupStringContext};
 use crate::{STARDAYS, MONTH_LENGTH, MONTH_NAMES};
 
 /// Converts a number (assumed between 1 and 29) into a Roman numeral string.
@@ -135,29 +138,45 @@ pub fn latin_uppercase(s: &str) -> String {
 /// Reads the rank entry from a Sancti file for the given entry and version.
 /// Constructs a filename via `subdirname("Sancti", ver)` and then loads the file via `setupstring`.
 /// Splits the "Rank" field on ";;" and returns a tuple (antiphon, rankname_font).
-pub fn findkalentry(entry: &str, ver: &str) -> (String, String) {
+pub fn findkalentry(ctx: &mut SetupStringContext, entry: &str, ver: &str, day: u32, month: u32, year: i32) -> (String, String) {
     let filename = format!("{}{}.txt", subdirname("Sancti", ver), entry);
-    let saint_map = match setupstring("Latin", &filename, &[]) {
+    let saint_map = match ctx.setupstring("Latin", &filename, ResolveDirectives::All) {
         Some(map) => map,
         None => return (String::new(), String::new()),
     };
-    let rank_field = saint_map.get("Rank").unwrap_or(&String::new());
+    let rank_field = saint_map.get("Rank").cloned().unwrap_or_default();
     let parts: Vec<&str> = rank_field.split(";;").collect();
     if parts.is_empty() || parts[0].is_empty() {
         return (String::new(), String::new());
     }
     // Parse the rank value from the third part.
     let rank: f64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0);
-    let mut rankname_str = rankname("Latin");
+
+    // read the Sunday table
+
+    let winner = ""; // ???
+    let mut rankname_str = rankname(
+        ctx,
+        "Latin",
+        rank,
+        winner, // TODO: winner?
+        &ctx.commune.clone(),
+        &ver,
+        day, month, year,
+        ctx.dayofweek.clone(),
+        &ctx.hora.clone(),
+    );
     if ver.contains("Monastic") || ver.contains("Ordo Praedicatorum") {
         rankname_str = rankname_str.replace("IV. classis", "Memoria");
     }
     let antiphon = setfont(
         liturgical_color(parts[0]),
-        if rank > 4.0 && !contains_ci(parts[0], "octava") && !contains_ci(parts[0], "vigilia") {
-            latin_uppercase(parts[0])
-        } else {
-            parts[0].to_string()
+        &{
+            if rank > 4.0 && !ci_contains(parts[0], "octava") && !ci_contains(parts[0], "vigilia") {
+                latin_uppercase(parts[0])
+            } else {
+                parts[0].to_string()
+            }
         },
     );
     let rankname_font = setfont("1 maroon", &format!(" {}", rankname_str));
@@ -165,18 +184,18 @@ pub fn findkalentry(entry: &str, ver: &str) -> (String, String) {
 }
 
 /// Returns the kalendar entry for a given date (in "mm-dd-yyyy" format) and version string.
-pub fn kalendar_entry(date: &str, ver: &str) -> String {
+pub fn kalendar_entry(ctx: &mut SetupStringContext, date: &str, ver: &str) -> String {
     if date.len() < 5 {
         return String::new();
     }
     let date_trimmed = &date[0..5];
-    let kal_str = get_kalendar(ver, date_trimmed);
+    let kal_str = get_kalendar(ver, date_trimmed).unwrap_or_default();
     let mut kal_entries: Vec<&str> = kal_str.split('~').collect();
     if kal_entries.is_empty() {
         return String::new();
     }
     let first = kal_entries.remove(0);
-    let (antiphon, rankfont) = findkalentry(first, ver);
+    let (antiphon, rankfont) = findkalentry(ctx, first, ver);
     let mut output = format!("{} {}", antiphon, rankfont);
     if (ver.contains("1955") || ver.contains("196"))
         && date_trimmed.starts_with("01-")
@@ -188,7 +207,7 @@ pub fn kalendar_entry(date: &str, ver: &str) -> String {
         return String::new();
     }
     for ke in kal_entries {
-        let (d1, _d2) = findkalentry(ke, ver);
+        let (d1, _d2) = findkalentry(ctx, ke, ver);
         output.push_str(&format!(" Com. {}", d1));
     }
     output
@@ -199,6 +218,7 @@ pub fn kalendar_entry(date: &str, ver: &str) -> String {
 /// and a dominica counter (`domlet_counter`). Returns a 5–tuple:
 /// (epact cycle, dominica letter, romanday, numeric day, kalendar entry).
 pub fn table_row(
+    ctx: &mut SetupStringContext,
     date: &str,
     cday: i32,
     version1: &str,
@@ -207,9 +227,9 @@ pub fn table_row(
     domlet_counter: i32,
 ) -> (String, String, String, i32, String) {
     let d: i32 = date.get(3..5).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let mut c = kalendar_entry(date, version1);
+    let mut c = kalendar_entry(ctx, date, version1);
     if compare {
-        let c2 = kalendar_entry(date, version2);
+        let c2 = kalendar_entry(ctx, date, version2);
         c.push_str(&format!(
             "&nbsp;<br/>{}",
             if c2.is_empty() { "&nbsp;" } else { &c2 }
@@ -226,18 +246,22 @@ pub fn table_row(
 
 /// Returns an HTML table row for a given note.
 /// Loads the comment text from "Psalterium/Comment.txt" and wraps it in a table row.
-pub fn note(note: &str, lang: &str, lang1: &str) -> String {
-    let comm_map = setupstring(lang1, "Psalterium/Comment.txt", &[]).unwrap_or_default();
-    let comment_text = comm_map.get(&format!("{} note", note)).unwrap_or(&String::new());
+pub fn note(ctx: &mut SetupStringContext, note: &str, lang: &str) -> String {
+    let comm_map = ctx
+        .setupstring(lang, "Psalterium/Comment.txt", ResolveDirectives::All)
+        .unwrap_or_default();
+    let comment_text = comm_map.get(&format!("{} note", note)).cloned().unwrap_or_default();
     format!(
         r#"<TR><TD COLSPAN="5" ALIGN="LEFT">{}</TD></TR>"#,
-        setfont("1", comment_text)
+        setfont("1", &comment_text)
     )
 }
 
 /// Produces the HTML header for the kalendar page.
 /// Uses Rust formatting and builds the output as a single String.
-pub fn html_header() -> String {
+/// 
+/// - `version1`: version string
+pub fn html_header(version1: &str) -> String {
     // Build the header line by line.
     let mut output = String::new();
 
@@ -248,14 +272,12 @@ pub fn html_header() -> String {
     output.push_str("<H1>\n");
     output.push_str("<FONT COLOR=\"MAROON\" SIZE=\"+1\"><B><I>Kalendarium</I></B></FONT>&ensp;\n");
 
-    // Get version string. (Assume get_version() is defined in globals.)
-    let version1 = crate::globals::get_version();
     // For demonstration, we assume there's no version comparison.
     let compare = false;
     let vers = if compare {
         format!("{} / {}", version1, "version2")
     } else {
-        version1
+        version1.to_string()
     };
     output.push_str(&format!("<FONT COLOR=\"RED\" SIZE=\"+1\">{}</FONT>\n", vers));
     output.push_str("</H1>\n");
@@ -328,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_html_header_contains_links() {
-        let header = html_header();
+        let header = html_header("Monastic 1962");
         assert!(header.contains("Kalendarium"));
         assert!(header.contains("Divinum Officium"));
     }

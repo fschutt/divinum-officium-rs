@@ -68,6 +68,10 @@ static MONTH_NAMES: [&str; 13] = [
     "December",
 ];
 
+/// Wraps text in a font–styled SPAN. The font description is in "[size][ italic][ bold] color" format.
+pub fn setfont(font: &str, text: &str) -> String {
+    format!("<SPAN STYLE=\"font:{};\">{}</SPAN>", font, text)
+}
 
 /// Returns a list of available vernacular languages for the datafiles
 /// rooted at `basedir`. This replicates the behavior of

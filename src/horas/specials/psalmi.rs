@@ -29,16 +29,7 @@ use crate::postprocess::{postprocess_ant, postprocess_vr};
 use crate::tempora::gettempora;
 use crate::offices::officestring;
 use crate::specials_papal::{papal_rule, papal_prayer, papal_commem_rule, papal_antiphon_dum_esset, replace_ndot};
-
-// A helper function that mimics Perl’s chompd: trim trailing whitespace/newlines.
-fn chompd(s: &str) -> String {
-    s.trim_end().to_string()
-}
-
-/// Simple case–insensitive containment check.
-fn contains_ci(s: &str, pat: &str) -> bool {
-    s.to_lowercase().contains(&pat.to_lowercase())
-}
+use crate::regex::contains_ci;
 
 /// Main psalmi function. Depending on the current hour, it calls either the
 /// matutinum, major, or minor branch. Then it calls `antetpsalm()` to add antiphonal

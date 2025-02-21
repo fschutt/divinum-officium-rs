@@ -93,10 +93,6 @@ impl SetupStringProvider for SetupStringContext {
 /// We replicate that logic here.
 pub type FileSections = HashMap<String, String>;
 
-//-----------------------------------
-// Condition Parsing & Table
-//-----------------------------------
-
 lazy_static! {
     /// We replicate the “stopword_weights” from the Perl code:
     ///   - "sed", "vero" => 1
@@ -855,10 +851,6 @@ fn merge_section_maps(base: FileSections, mut newsec: FileSections) -> FileSecti
     result
 }
 
-//-----------------------------------------
-//  Additional “officestring” logic
-//-----------------------------------------
-
 impl SetupStringContext {
     /// This replicates `officestring($lang, $fname, $flag)`.
     /// In the original code, it loads a file from Tempora or something,
@@ -931,4 +923,111 @@ pub fn setupstring(
     };
 
     context.setupstring(lang, fname, resolve)
+}
+
+/// Returns a file path according to the fallback logic:
+/// 1. If a file exists at `{datafolder}{redirect}/{lang}/{filename}`, return that path.
+/// 2. If `lang` contains a dash, remove the last dash–component (recursively) and try again.
+/// 3. Otherwise, if a file exists at `{datafolder}{redirect}/{main_langfb}/{filename}`, return that.
+/// 4. Else, return `{datafolder}{redirect}/Latin/{filename}`.
+///
+/// The `redirect` is set to "/../horas" if:
+///   - `datafolder` contains "missa" (case–insensitive) AND
+///   - `filename` matches the pattern "C1[a-z]?" (here implemented simply as containing "C1").
+///  
+/// The `file_exists` parameter is a closure that, given a path, returns whether that file exists.
+pub fn checkfile<F: Fn(&str) -> bool>(
+    datafolder: &str,
+    main_langfb: &str,
+    lang: &str,
+    filename: &str,
+    file_exists: &F,
+) -> String {
+    use crate::regex::{file_matches_c1, ci_contains, fallback_lang};
+    
+    // Determine the redirect part.
+    let redirect = if ci_contains(datafolder, "missa") && file_matches_c1(filename) {
+        "/../horas"
+    } else {
+        ""
+    };
+
+    // Build the candidate path for the given language.
+    let candidate = format!("{datafolder}{redirect}/{lang}/{filename}");
+    if file_exists(&candidate) {
+        return candidate;
+    }
+
+    // If lang contains a dash, remove the last dash–component and try recursively.
+    if lang.contains('-') {
+        if let Some(new_lang) = fallback_lang(lang) {
+            return checkfile(datafolder, main_langfb, &new_lang, filename, &file_exists);
+        }
+    }
+
+    // Try the main fallback language.
+    let candidate_main = format!("{datafolder}{redirect}/{main_langfb}/{filename}");
+    if file_exists(&candidate_main) {
+        return candidate_main;
+    }
+
+    // Otherwise, default to Latin.
+    format!("{datafolder}{redirect}/Latin/{filename}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A dummy file existence function.
+    fn dummy_file_exists(path: &str) -> bool {
+        // For testing, we simulate that only these paths exist.
+        let existing = vec![
+            "/data/missa/English/sample.txt",
+            "/data/missa/Latin/sample.txt",
+            "/data/missa/En/sample.txt",
+            "/data/missa/En-UK/sample.txt",
+        ];
+        existing.contains(&path)
+    }
+
+    #[test]
+    fn test_checkfile_direct() {
+        // The candidate for "English" should exist.
+        let path = checkfile("/data/missa", "English", "English", "sample.txt", &dummy_file_exists);
+        assert_eq!(path, "/data/missa/English/sample.txt");
+    }
+
+    #[test]
+    fn test_checkfile_fallback_lang() {
+        // When given "En-UK" and no direct file exists for it, the fallback ("En") is tried.
+        let path = checkfile("/data/missa", "English", "En-UK", "sample.txt", &dummy_file_exists);
+        // Our dummy_file_exists returns true for "/data/missa/En/sample.txt".
+        assert_eq!(path, "/data/missa/En/sample.txt");
+    }
+
+    #[test]
+    fn test_checkfile_main_langfb() {
+        // If neither candidate nor fallback exists, use main_langfb.
+        let path = checkfile("/data/missa", "English", "Nonexistent", "sample.txt", &dummy_file_exists);
+        // Since candidate for "Nonexistent" doesn't exist, candidate_main is "/data/missa/English/sample.txt".
+        assert_eq!(path, "/data/missa/English/sample.txt");
+    }
+
+    #[test]
+    fn test_checkfile_default_to_latin() {
+        // If no candidate is found, default to Latin.
+        let always_false = |_: &str| false;
+        let path = checkfile("/data/missa", "English", "Nonexistent", "sample.txt", &always_false);
+        assert_eq!(path, "/data/missa/Latin/sample.txt");
+    }
+
+    #[test]
+    fn test_checkfile_redirect() {
+        // Test that if datafolder contains "missa" and filename contains "C1",
+        // the redirect "/../horas" is applied.
+        let custom_exists = |p: &str| p == "/data/missa/../horas/English/sample.txt";
+        let path = checkfile("/data/missa", "English", "English", "C1_sample.txt", &custom_exists);
+        assert_eq!(path, "/data/missa/../horas/English/sample.txt");
+    }
 }

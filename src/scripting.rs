@@ -45,12 +45,12 @@
 //!        false, // not short
 //!    );
 //! }
-//
-// Then calls to `dispatch_script_function("psalm", &["117".to_string()])` => returns "some psalm text".
+//! ```
+//! 
+//! Then calls to `dispatch_script_function("psalm", &["117".to_string()])` => returns "some psalm text".
 
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
-use regex::Regex;
 use std::fmt;
 
 /// A type alias for the function signature. In Perl, subroutines can have
@@ -174,55 +174,102 @@ pub fn dispatch_script_function(function_name: &str, args: &[String]) -> String 
     code_ref(args)
 }
 
-/// Parse a string of arguments in the simplistic style:
+/// Parse a string of arguments in a simplistic style.
+/// 
 /// - Splits on commas that are not within single quotes,
-/// - Each argument is either `-?\d+` or `'(.*)'` (unescaped).
-///
-/// # Examples
-///
+/// - Each argument is either a number (matching `-?\d+`) or a single-quoted string.
+/// 
+/// Examples:
+/// 
 /// ```
-/// use divinum_officium::scripting::parse_script_arguments;
 /// let args = parse_script_arguments("123, 'hello', '12, 34', -5");
 /// assert_eq!(args, vec!["123", "hello", "12, 34", "-5"]);
 /// ```
 pub fn parse_script_arguments(list_str: &str) -> Vec<String> {
+    // Early return if the string is empty.
     if list_str.is_empty() {
-        return vec![];
+        return Vec::new();
     }
-    // We'll split the line on commas that are not inside single quotes.
-    // The original code uses:
-    //   split /,(?=(?:[^']|'[^']*')*$)/, $list_str
-    // Then for each piece, match /'(.*)'|(-?\d+)/ => $1 || $2
-    // We replicate that logic in Rust.
 
-    // 1) Split logic:
-    let re_split = Regex::new(r#",(?=(?:[^']*'[^']*')*[^']*$)"#).unwrap(); 
-    let pieces: Vec<&str> = re_split.split(list_str).collect();
+    // Split the string on commas that are not within single quotes.
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut in_quote = false;
 
-    // 2) For each piece, match:
-    //    `'(.*)'|(-?\d+)`
-    //    If `'something'` => "something"
-    //    else if -?\d+ => e.g. "123"
-    //    else => empty or leftover
-    let re_arg = Regex::new(r#"^'(.*)'|(-?\d+)$"#).unwrap();
+    // Iterate over the string by character index.
+    for (i, ch) in list_str.char_indices() {
+        if ch == '\'' {
+            // Toggle our "in quote" flag.
+            in_quote = !in_quote;
+        } else if ch == ',' && !in_quote {
+            // Found a comma outside a quoted string: slice out the piece.
+            pieces.push(&list_str[start..i]);
+            start = i + 1; // start next piece after the comma
+        }
+    }
+    // Push the last piece.
+    pieces.push(&list_str[start..]);
 
     let mut results = Vec::new();
-    for p in pieces {
-        if let Some(caps) = re_arg.captures(p.trim()) {
-            // prefer group(1) if it matched, otherwise group(2)
-            if let Some(m1) = caps.get(1) {
-                results.push(m1.as_str().to_string());
-            } else if let Some(m2) = caps.get(2) {
-                results.push(m2.as_str().to_string());
-            }
+    // For each piece, trim it and then extract the inner part if it is quoted.
+    for piece in pieces {
+        let trimmed = piece.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // If the argument is a quoted string, remove the surrounding quotes.
+        if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+            results.push(trimmed[1..trimmed.len() - 1].to_string());
         } else {
-            // Possibly an empty string or something that doesn't match. 
-            // We could store it raw. In Perl, it'd be empty. We'll store the trimmed piece.
-            if !p.trim().is_empty() {
-                results.push(p.trim().to_string());
-            }
+            // Otherwise, just use the trimmed piece (e.g. a numeric literal).
+            results.push(trimmed.to_string());
         }
     }
 
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty_input() {
+        assert_eq!(parse_script_arguments(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_numeric_only() {
+        assert_eq!(parse_script_arguments("123"), vec!["123"]);
+        assert_eq!(parse_script_arguments("-456"), vec!["-456"]);
+    }
+
+    #[test]
+    fn test_quoted_only() {
+        assert_eq!(parse_script_arguments("'hello'"), vec!["hello"]);
+        assert_eq!(parse_script_arguments("  'world'  "), vec!["world"]);
+    }
+
+    #[test]
+    fn test_mixed_arguments() {
+        let input = "123, 'hello', '12, 34', -5";
+        let expected = vec!["123", "hello", "12, 34", "-5"];
+        assert_eq!(parse_script_arguments(input), expected);
+    }
+
+    #[test]
+    fn test_incomplete_quotes() {
+        // If the quotes are not balanced, the code leaves the argument unmodified.
+        let input = "'incomplete, 789";
+        let expected = vec!["'incomplete, 789"];
+        assert_eq!(parse_script_arguments(input), expected);
+    }
+
+    #[test]
+    fn test_extra_whitespace_and_empty_pieces() {
+        // Empty pieces (or extra spaces) are ignored.
+        let input = " 42 , ' spaced ' ,   -7 , , ";
+        let expected = vec!["42", " spaced ", "-7"];
+        assert_eq!(parse_script_arguments(input), expected);
+    }
 }

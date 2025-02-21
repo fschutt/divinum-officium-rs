@@ -33,11 +33,7 @@ use crate::globals::{
 };
 use crate::offices::officestring;
 use crate::setup_string::setupstring;
-
-/// A helper function that performs a case–insensitive check whether `s` contains `pat`.
-fn contains_ci(s: &str, pat: &str) -> bool {
-    s.to_lowercase().contains(&pat.to_lowercase())
-}
+use crate::regex::contains_ci;
 
 /// Returns the first nonempty value among the keys "Commemoratio", "Commemoratio 1", etc.
 fn check_commemoratio(map: &HashMap<String, String>) -> String {

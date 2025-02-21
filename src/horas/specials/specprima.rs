@@ -34,15 +34,7 @@ use crate::specials_build::{setbuild, setbuild1, setbuild2};
 use crate::comment::setcomment;
 use crate::columnsel;
 use crate::specials_papal::replace_ndot;
-
-/// Helper: Case–insensitive containment check.
-fn contains_ci(s: &str, pat: &str) -> bool {
-    s.to_lowercase().contains(&pat.to_lowercase())
-}
-
-/// ---------------------------------------------------------------------------
-/// lectio_brevis_prima
-/// ---------------------------------------------------------------------------
+use crate::regex::contains_ci;
 
 /// Returns the brief lecture for Prima as a tuple `(text, comment)`.
 pub fn lectio_brevis_prima(lang: &str) -> (String, i32) {
@@ -89,10 +81,6 @@ pub fn lectio_brevis_prima(lang: &str) -> (String, i32) {
     brevis.push_str("\n$Tu autem");
     (brevis, comment)
 }
-
-/// ---------------------------------------------------------------------------
-/// capitulum_prima
-/// ---------------------------------------------------------------------------
 
 /// Returns the capitulum for Prima as a String.
 /// The parameter `with_responsory` indicates whether responsory text should be included.
@@ -157,10 +145,6 @@ pub fn capitulum_prima(lang: &str, with_responsory: bool) -> String {
     format!("{}{}", capit, resp_lines.join("\n"))
 }
 
-/// ---------------------------------------------------------------------------
-/// get_prima_responsory
-/// ---------------------------------------------------------------------------
-
 /// Returns the Prima responsory as a String.
 /// If no key can be determined, returns an empty string.
 pub fn get_prima_responsory(lang: &str) -> String {
@@ -204,42 +188,6 @@ fn parse_doxology_key(s: &str) -> Option<String> {
         return Some(key);
     }
     None
-}
-
-/// Dummy implementation for gettempora(key) – assumed to be provided elsewhere.
-fn gettempora(key: &str) -> String {
-    // For demonstration, simply return the key.
-    key.to_string()
-}
-
-/// Dummy stub for columnsel(lang)
-fn columnsel(lang: &str) -> bool {
-    // For now, simply return true.
-    true
-}
-
-/// Dummy stub for setbuild, setbuild1, setbuild2
-fn setbuild(section: &str, name: &str, ord: &str) {
-    // Implementation provided elsewhere.
-    let _ = (section, name, ord);
-}
-fn setbuild1(section: &str, name: &str) {
-    let _ = (section, name);
-}
-fn setbuild2(msg: &str) {
-    let _ = msg;
-}
-
-/// Dummy stub for setcomment(label, source, comment, lang, prefix)
-fn setcomment(label: &str, source: &str, comment: bool, lang: &str, prefix: &str) {
-    let _ = (label, source, comment, lang, prefix);
-}
-
-/// Dummy stub for postprocess_short_resp
-mod postprocess {
-    pub fn postprocess_short_resp(lines: &mut Vec<String>, _lang: &str) {
-        // For demonstration, leave lines unchanged.
-    }
 }
 
 #[cfg(test)]

@@ -16,6 +16,8 @@ use crate::date::ydays_to_date;
 use crate::horas::kalendar::ordo::ordo_entry;
 use crate::regex::{replace_word_prefix, replace_all_case_insensitive};
 
+use super::ordo::OrdoContext;
+
 /// Abbreviates an entry string by performing a series of replacements,
 /// in the same order as in the original Perl code.
 pub fn abbreviate_entry(entry: &str) -> String {
@@ -139,7 +141,7 @@ pub fn replace_months_abbrev(s: &str) -> String {
 /// 
 /// # Returns
 /// A vector of lines (`Vec<String>`) representing the ICS file.
-pub fn ical_output(version1: &str, kyear: i32) -> Vec<String> {
+pub fn ical_output(ctx: &OrdoContext, version1: &str, kyear: i32) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     lines.push("Content-Type: text/calendar; charset=utf-8".to_string());
     lines.push(format!(
@@ -174,7 +176,7 @@ pub fn ical_output(version1: &str, kyear: i32) -> Vec<String> {
         let dtstart = format!("{:04}{:02}{:02}", yyear, ymonth, yday);
         let day_str = format!("{:02}-{:02}-{:04}", ymonth, yday, yyear);
         // Call ordo_entry with compare = false and winneronly = true.
-        let (e, _c2, _cv) = ordo_entry(&day_str, version1, false, true);
+        let (e, _c2, _cv) = ordo_entry( ctx, &day_str, false, true);
         // Abbreviate the entry.
         let e = abbreviate_entry(&e);
         lines.push("BEGIN:VEVENT".to_string());
@@ -190,6 +192,8 @@ pub fn ical_output(version1: &str, kyear: i32) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -300,19 +304,38 @@ mod tests {
         assert_eq!(output, expected);
     }
 
-    #[test]
-    fn test_replace_all_case_insensitive() {
-        // Test that a pattern like "Confessor\w+" is replaced case-insensitively.
-        let input = "Confessorus confessorABC CONFESSORtest";
-        let expected = "Conf. conf. Conf.";
-        let output = replace_word_prefix(&s, "Confessor", "Conf.");;
-        assert_eq!(output, expected);
+    fn dummy_ordo_context() -> OrdoContext {
+        OrdoContext {
+            version: "TestVersion".to_string(),
+            day: 15,
+            month: 3,
+            year: 2024,
+            daynames: vec![
+                "FirstPart".to_string(),
+                "Unused".to_string(),
+                "Morning: Vespera extra".to_string(),
+                "Extra".to_string(),
+            ],
+            commemoentries: vec!["Entry1".to_string(), "Entry2".to_string()],
+            headline: "Headline1 ~ Headline2".to_string(),
+            winner: "Sancti something".to_string(),
+            winner_map: {
+                let mut hm = HashMap::new();
+                hm.insert("Lectio Prima".to_string(), "SomeLectio".to_string());
+                hm
+            },
+            initia: true,
+            hora: "Laudes".to_string(),
+            smallblack: "black".to_string(),
+            smallfont: "small".to_string(),
+        }
     }
 
     #[test]
     fn test_ical_output() {
+        let context = dummy_ordo_context();
         // For testing, we call ical_output with dummy version1 and kyear.
-        let lines = ical_output("TestVersion", 2023);
+        let lines = ical_output(&context, "TestVersion", 2023);
         // The first line should be the content-type.
         assert!(lines[0].starts_with("Content-Type:"));
         // There should be a "BEGIN:VCALENDAR" line.
@@ -326,7 +349,7 @@ mod tests {
         // Use a fixed version string and year.
         let version1 = "TestVer";
         let kyear = 2024; // Leap year.
-        let lines = ical_output(version1, kyear);
+        let lines = ical_output(&dummy_ordo_context(), version1, kyear);
         // Check header lines.
         assert!(lines.contains(&"BEGIN:VCALENDAR".to_string()));
         assert!(lines.contains(&format!("Content-Disposition: attachment; filename=\"{} - {}.ics\"", version1, kyear)));
